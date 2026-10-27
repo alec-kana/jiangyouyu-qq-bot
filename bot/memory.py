@@ -6,6 +6,7 @@ r"""白守（BaiShou）本地记忆桥：直接读写它的 Markdown 日记库�
 - remember(): 往今天的日记里追加一条
 
 库路径由 BAISHOU_VAULT 指定（默认 文档\BaiShou）。
+只读写库里的 DIARY_SUBDIR 子目录：库的其它部分是主人的私人笔记，不能被群聊翻出来。
 """
 
 from __future__ import annotations
@@ -27,10 +28,15 @@ def available() -> bool:
     return VAULT.is_dir()
 
 
+def _diary_root() -> Path:
+    return VAULT / DIARY_SUBDIR
+
+
 def _iter_md():
-    if not VAULT.is_dir():
+    root = _diary_root()
+    if not root.is_dir():
         return
-    for path in VAULT.rglob("*.md"):
+    for path in root.rglob("*.md"):
         if path.is_file():
             yield path
 
@@ -48,7 +54,7 @@ def _today_file() -> Path:
     for path in _iter_md():
         if today in path.name:
             return path
-    target = VAULT / DIARY_SUBDIR / f"{today}.md"
+    target = _diary_root() / f"{today}.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     if not target.exists():
         target.write_text(
@@ -63,13 +69,18 @@ def remember(text: str, who: str = "") -> Path:
     stamp = datetime.now().strftime("%H:%M")
     with path.open("a", encoding="utf-8") as f:
         prefix = f"[{who}] " if who else ""
-        f.write(f"- {stamp} {prefix}{text.strip()}\n")
+        # 压成一行：换行会被当成新的列表项，可以伪造别的会话标签
+        f.write(f"- {stamp} {prefix}{' '.join(text.split())}\n")
     logger.info(f"memory: 记到 {path.name}: {text[:30]}")
     return path
 
 
-def recent(limit: int = 5) -> list[str]:
-    """最近几条记录（按文件日期倒序，取每篇末尾的列表项）。"""
+def recent(limit: int = 5, tags: tuple[str, ...] = ()) -> list[str]:
+    """最近几条记录（按文件日期倒序，取每篇末尾的列表项）。
+
+    tags 非空时只要带 [tag] 前缀的条目，防止 A 群/私聊的内容被 B 群带出来。
+    """
+    marks = tuple(f"[{t}] " for t in tags if t)
     items: list[tuple[str, str]] = []
     for path in _iter_md():
         try:
@@ -80,6 +91,8 @@ def recent(limit: int = 5) -> list[str]:
         for line in text.splitlines():
             line = line.strip()
             if line.startswith(("- ", "* ")) and len(line) > 4:
+                if marks and not line[2:].strip().split(" ", 1)[-1].startswith(marks):
+                    continue
                 items.append((date, line[2:].strip()))
     items.sort(key=lambda x: x[0], reverse=True)
     return [f"{d} {t}" for d, t in items[:limit]]
@@ -112,7 +125,7 @@ def search(keyword: str, limit: int = 3) -> list[str]:
 def stats() -> dict:
     files = list(_iter_md())
     return {
-        "vault": str(VAULT),
+        "vault": str(_diary_root()),
         "files": len(files),
         "exists": VAULT.is_dir(),
         "today": datetime.now().strftime("%Y-%m-%d"),
