@@ -75,34 +75,42 @@ def remember(text: str, who: str = "") -> Path:
     return path
 
 
+def _has_tag(line: str, marks: tuple[str, ...]) -> bool:
+    """列表项「- HH:MM [tag] ...」是否带其中某个标签。"""
+    line = line.strip()
+    return line.startswith(("- ", "* ")) and line[2:].strip().split(" ", 1)[-1].startswith(marks)
+
+
 def recent(limit: int = 5, tags: tuple[str, ...] = ()) -> list[str]:
     """最近几条记录（按文件日期倒序，取每篇末尾的列表项）。
 
     tags 非空时只要带 [tag] 前缀的条目，防止 A 群/私聊的内容被 B 群带出来。
     """
     marks = tuple(f"[{t}] " for t in tags if t)
-    items: list[tuple[str, str]] = []
+    items: list[tuple[str, int, str]] = []
     for path in _iter_md():
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
         date = _date_of(path, text)
-        for line in text.splitlines():
+        for idx, line in enumerate(text.splitlines()):
             line = line.strip()
             if line.startswith(("- ", "* ")) and len(line) > 4:
-                if marks and not line[2:].strip().split(" ", 1)[-1].startswith(marks):
+                if marks and not _has_tag(line, marks):
                     continue
-                items.append((date, line[2:].strip()))
-    items.sort(key=lambda x: x[0], reverse=True)
-    return [f"{d} {t}" for d, t in items[:limit]]
+                items.append((date, idx, line[2:].strip()))
+    # 同一天里按行号倒序，取到的是当天最新的几条
+    items.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return [f"{d} {t}" for d, _, t in items[:limit]]
 
 
-def search(keyword: str, limit: int = 3) -> list[str]:
-    """关键词检索，返回带日期的片段。"""
+def search(keyword: str, limit: int = 3, tags: tuple[str, ...] = ()) -> list[str]:
+    """关键词检索，返回带日期的片段；tags 含义同 recent()。"""
     kw = keyword.strip()
     if not kw:
         return []
+    marks = tuple(f"[{t}] " for t in tags if t)
     hits: list[tuple[int, str, str]] = []
     for path in _iter_md():
         try:
@@ -113,11 +121,17 @@ def search(keyword: str, limit: int = 3) -> list[str]:
             continue
         date = _date_of(path, text)
         snippet = ""
+        count = 0
         for line in text.splitlines():
-            if kw in line and line.strip() not in ("---",):
+            if kw not in line or line.strip() in ("---",):
+                continue
+            if marks and not _has_tag(line, marks):
+                continue
+            count += line.count(kw)
+            if not snippet:
                 snippet = line.strip()[:120]
-                break
-        hits.append((text.count(kw), date, snippet))
+        if count:
+            hits.append((count, date, snippet))
     hits.sort(key=lambda x: (x[0], x[1]), reverse=True)
     return [f"{d}：{s}" for _, d, s in hits[:limit]]
 

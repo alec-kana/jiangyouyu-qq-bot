@@ -89,7 +89,9 @@ async def _recall(bot: Bot, event: MessageEvent, arg=CommandArg()) -> None:
         await bot.send(event, f"找不到白守的库：{memory.VAULT}")
         return
 
-    hits = await asyncio.to_thread(memory.search, keyword)
+    # 群里只翻本群和开发者笔记，私聊（只有开发者能用）不限
+    tags = (f"群{event.group_id}", DEV_NAME) if getattr(event, "message_type", "") == "group" else ()
+    hits = await asyncio.to_thread(memory.search, keyword, 3, tags)
     if not hits:
         await bot.send(event, f"记忆里没有「{keyword}」")
         return

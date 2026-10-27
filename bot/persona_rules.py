@@ -400,7 +400,7 @@ def build_system_prompt(
     if has_memory:
         system += (
             "\n\n你有个本地记忆小窝叫白守，里面记着一些人和事，那是你自己的记忆。"
-            "被问起以前的事就翻翻；群友让你记住什么，就答应下来。"
+            "被问起以前的事就翻翻。"
         )
 
     return system
