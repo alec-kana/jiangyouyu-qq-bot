@@ -27,6 +27,7 @@
 ```powershell
 python tests\test_persona_rules.py         # 纯规则，不连 QQ、不调模型
 python tests\test_gscore_guard.py          # 二维码不进群的判断
+python tests\test_bonds.py                 # 小本本（好感度 / 日记）读写，临时目录里跑
 python tests\test_migrate_journal_tags.py  # 旧日记迁移脚本（临时目录里跑）
 python tests\smoke_stack.py --start-bot     # 起一个 NoneBot 模拟收发（--core 连已启动的整套）
 ```
@@ -122,6 +123,8 @@ python tests\smoke_stack.py --start-bot     # 起一个 NoneBot 模拟收发（-
 ## 改之前先想清楚的地方
 
 - **记忆隔离是刻意的**：不要为了「记得更多」把 `memory.recent` 的会话标签过滤去掉，否则私聊和别的群的内容会被带进来。想让机器人跨群记住某件事，用开发者 `/记`（署名 `DEV_NAME`，任何会话问到「记得/上次」时都会被带出）。
+- **小本本按人共用、私事不进群**：`bonds.py` 按 QQ 号存好感、熟悉度和日记，群里私聊是同一条（作者要求「换个地方也认得」）；但私聊里摘的日记带 `src="p"`，`visible_notes` 在群里会滤掉，别去掉。日记和群风格是群友原话整理的，只能放 user 消息（`compose_messages` 的小本本块）；system 里只放由数字算出的态度档位，不放名字和日记原文。
+- **傲娇的比例是刻意的**：好感难涨易掉（`update_bond`），露真心按 `DERE_CHANCE` 抽签，其余每句都要求「保持傲」。作者明确要求不能日子久了人人高好感、一直很娇，调参数时别把这两处放松太多。
 - **游戏查询对所有群友开放**：由早柚核心回复，不经过人设、不计入群聊限流；扫码登录只走私聊（群临时会话）是刻意的，二维码绝不进群、群里也不提示，`gscore_login.py` 的三道保险别拆。
 - **限流分档是刻意的**：`persona_rules.QUOTA_TIERS` 决定额度用到多少时停哪类回复。私聊、被叫触发的抽卡定型文、游戏查询指令按需求不拦，不要顺手加进去。
 - **早柚核心**：安装、核心侧配置（主人账号、「扫码登陆」设 `DIRECT`、`core_command` 保持 `SV`）和群友用法见 `docs/早柚核心接入.md`；核心数据目录里有群友的米游社凭据，不要进 git。
