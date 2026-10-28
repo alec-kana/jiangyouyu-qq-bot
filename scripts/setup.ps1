@@ -330,6 +330,13 @@ if ($NoCore) {
     $pluginDir = Join-Path $coreDir 'gsuid_core\plugins'
     New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null
     foreach ($name in $CorePlugins) { [void](Sync-GitRepo $name (Join-Path $pluginDir $name)) }
+    # 本仓库自己的核心插件（gscore_plugins，自动签到等）：每次覆盖拷一遍
+    foreach ($own in Get-ChildItem (Join-Path $root 'gscore_plugins') -Directory) {
+        $dest = Join-Path $pluginDir $own.Name
+        if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
+        Copy-Item -LiteralPath $own.FullName -Destination $dest -Recurse
+        Ok "本仓库插件 $($own.Name)"
+    }
     Push-Location $coreDir
     try { Invoke-Native uv @('sync', '--python', $interp) '安装早柚核心依赖' } finally { Pop-Location }
     # 插件自己的依赖（比如鸣潮要 opencv）：核心只在用它的指令装插件时才装，我们是 git 拉的，要自己装；
