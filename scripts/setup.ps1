@@ -227,7 +227,7 @@ foreach ($key in $required.Keys) {
 $prefixLine = (Read-EnvFile)['GAME_CMD_PREFIXES']
 if ($prefixLine) {
     $have = @($prefixLine.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    $missing = @($CorePlugins | ForEach-Object { $lock.git.$_.prefixes } | Where-Object { $have -notcontains $_ })
+    $missing = @($CorePlugins | ForEach-Object { $lock.git.$_.prefixes } | Where-Object { $have -notcontains $_ } | Select-Object -Unique)
     if ($missing) {
         Set-EnvValue 'GAME_CMD_PREFIXES' (($have + $missing) -join ',')
         Ok ("人设避让的指令前缀补上了：{0}" -f ($missing -join '、'))

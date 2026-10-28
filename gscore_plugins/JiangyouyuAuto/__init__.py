@@ -11,12 +11,13 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Dict
 
 from gsuid_core.aps import scheduler
 from gsuid_core.logger import logger
 from gsuid_core.models import Event
-from gsuid_core.server import on_core_start
+from gsuid_core.server import on_core_start_before
 from gsuid_core.subscribe import gs_subscribe
 from gsuid_core.utils.database.models import GsUser
 from gsuid_core.utils.plugins_config.gs_config import all_config_list
@@ -54,6 +55,31 @@ def apply_configs() -> list[str]:
     return changed
 
 
+def patch_loaded_report_flags() -> None:
+    """米哈游系插件在导入时就把 PrivateSignReport 读进模块变量，改配置要重启才生效；
+    刚装好的第一晚（崩坏3 默认开）会私聊每个人，所以把已加载模块里的值也改掉。"""
+    for module in list(sys.modules.values()):
+        # 核心按 plugins.BBBUID.BBBUID.bbb_sign 这样的名字导入插件
+        parts = (getattr(module, "__name__", "") or "").split(".")
+        package = next((p for p in parts if p in CONFIGS), "")
+        if CONFIGS.get(package, {}).get("PrivateSignReport") is not False:
+            continue
+        for attr in ("IS_REPORT", "IS_REPORT_PRIVATE"):
+            if getattr(module, attr, False) is True:
+                setattr(module, attr, False)
+                logger.info(f"[酱油鱼·自动签到] 已关掉 {module.__name__}.{attr}")
+
+
+def ensure_end_job() -> None:
+    """终末地导入时 SchedSignin 还没开就不注册定时签到，刚装好要补注册一次。"""
+    if scheduler.get_job("end_sign_0") is not None:
+        return
+    for name, module in list(sys.modules.items()):
+        if name.endswith("EndUID.end_sign") and hasattr(module, "setup_scheduler"):
+            module.setup_scheduler()
+            return
+
+
 async def ensure_mihoyo_subscriptions() -> int:
     """给每个有 Cookie 的米哈游系 UID 补上自动签到订阅，返回新加的条数。"""
     added = 0
@@ -70,13 +96,20 @@ async def ensure_mihoyo_subscriptions() -> int:
 
 
 async def sync() -> None:
-    changed = apply_configs()
-    added = await ensure_mihoyo_subscriptions()
+    try:
+        changed = apply_configs()
+        patch_loaded_report_flags()
+        ensure_end_job()
+        added = await ensure_mihoyo_subscriptions()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(f"[酱油鱼·自动签到] 同步失败：{exc}")
+        return
     if changed or added:
         logger.info(f"[酱油鱼·自动签到] 配置 {'、'.join(changed) or '无变化'}；新开自动签到 {added} 个 UID")
 
 
-@on_core_start(priority=9)
+# 放在「启动前」：普通启动钩子按优先级排队，前面的资源下载慢或报错会把这里拖晚甚至跳过
+@on_core_start_before(priority=90)
 async def _on_start() -> None:
     await sync()
 
