@@ -52,18 +52,21 @@ from persona_rules import (
     follow_decision,
     humanize,
     is_conversation_ending,
+    is_offensive,
     is_game_command,
     judge_annoyance,
     judge_atmosphere,
     judge_mood,
     looks_addressed,
     looks_self_disclosure,
+    name_call_prob,
     parse_group_diary,
     parse_notes,
     pick_flavor,
     quota_allows,
     safe_name,
     sticker_category,
+    sticker_scene,
     visible_notes,
     wants_help,
     wants_sticker,
@@ -87,14 +90,20 @@ HELP_MAX_TOKENS = int(os.getenv("REPLY_HELP_MAX_TOKENS", "160"))
 HISTORY_SIZE = int(os.getenv("HISTORY_SIZE", "24"))
 COOLDOWN_SEC = float(os.getenv("REPLY_COOLDOWN", "8"))
 FOLLOW_COOLDOWN_SEC = float(os.getenv("REPLY_GROUP_COOLDOWN", "10"))
-CHIME_PROB = float(os.getenv("REPLY_CHIME_PROB", "0.03"))
-CHIME_COOLDOWN_SEC = float(os.getenv("REPLY_CHIME_COOLDOWN", "1200"))
+CHIME_PROB = float(os.getenv("REPLY_CHIME_PROB", "0.02"))
+CHIME_COOLDOWN_SEC = float(os.getenv("REPLY_CHIME_COOLDOWN", "2700"))
 CHIME_HISTORY_BUDGET = int(os.getenv("CHIME_HISTORY_BUDGET", "260"))
 # 私聊内容同时记进白守日记，慢慢养出固定人格
 PRIVATE_MIRROR = os.getenv("PRIVATE_MIRROR", "1").strip() not in ("0", "false", "False")
 # 群聊里「真的接上了」的对话也记（被叫/接续，不含随机插话），带群号和发言人
 GROUP_MIRROR = os.getenv("GROUP_MIRROR", "1").strip() not in ("0", "false", "False")
 GLOBAL_PER_MIN = int(os.getenv("REPLY_PER_MIN", "4"))
+# 没被 @ 时（接话、冒泡、只发表情）：每个群每小时最多几条，同群两条之间至少隔几秒，不像住在群里。
+# 被 @ 不受这两条限制，有人找她就回
+GROUP_PER_HOUR = int(os.getenv("REPLY_GROUP_PER_HOUR", "6"))
+CASUAL_GAP = float(os.getenv("REPLY_CASUAL_GAP", "180"))
+# 被 @ 时的冷却（秒），只防同一秒被连 @ 刷屏
+AT_COOLDOWN = float(os.getenv("REPLY_AT_COOLDOWN", "3"))
 
 ENGAGE_TTL = float(os.getenv("ENGAGE_TTL", "120"))
 ENGAGE_FOLLOW_WINDOW = float(os.getenv("ENGAGE_FOLLOW_WINDOW", "45"))
@@ -106,9 +115,9 @@ GAME_CMD_PREFIXES = tuple(
     p.strip() for p in os.getenv("GAME_CMD_PREFIXES", ",".join(DEFAULT_GAME_PREFIXES)).split(",") if p.strip()
 )
 PROB_CALLED = float(os.getenv("REPLY_PROB_CALLED", "0.5"))
-PROB_FOLLOW = float(os.getenv("REPLY_PROB_FOLLOW", "0.1"))
+PROB_FOLLOW = float(os.getenv("REPLY_PROB_FOLLOW", "0.08"))
 STICKER_AUTO_PROB = float(os.getenv("STICKER_AUTO_PROB", "0.08"))
-STICKER_AUTO_COOLDOWN = float(os.getenv("STICKER_AUTO_COOLDOWN", "120"))
+STICKER_AUTO_COOLDOWN = float(os.getenv("STICKER_AUTO_COOLDOWN", "600"))
 PESTER_WINDOW = float(os.getenv("PESTER_WINDOW", "45"))
 PESTER_COUNT = int(os.getenv("PESTER_COUNT", "5"))
 SNUB_SECONDS = float(os.getenv("SNUB_SECONDS", "100"))
@@ -119,8 +128,12 @@ DIARY_GROUP_GAP = float(os.getenv("DIARY_GROUP_GAP", "1800"))
 # 看到库里没有的表情时收藏的概率；配图时先从自己收藏的里挑的概率
 STICKER_SAVE_PROB = float(os.getenv("STICKER_SAVE_PROB", "0.2"))
 STICKER_SAVED_PREFER = float(os.getenv("STICKER_SAVED_PREFER", "0.3"))
-# 群里要回话时，只甩一张表情不说话的概率（被 @ 和正经求助除外）：话少一点不容易露馅
-STICKER_ONLY_PROB = float(os.getenv("STICKER_ONLY_PROB", "0.3"))
+# 群里要回话、而且这句话有明显场景（有人抽卡歪了、卧槽、无语…）时，只甩一张对得上的表情不说话的概率；
+# 被 @ 和正经求助除外，同一个群至少隔 STICKER_ONLY_COOLDOWN 秒
+STICKER_ONLY_PROB = float(os.getenv("STICKER_ONLY_PROB", "0.5"))
+STICKER_ONLY_COOLDOWN = float(os.getenv("STICKER_ONLY_COOLDOWN", "900"))
+# 没有明显场景时，偶尔随手甩一张无厘头表情的概率（同样受上面的间隔限制）
+STICKER_RANDOM_PROB = float(os.getenv("STICKER_RANDOM_PROB", "0.05"))
 
 _data_env = os.getenv("PERSONA_DATA_DIR", "").strip()
 _DATA_DIR = Path(_data_env) if _data_env else Path(__file__).resolve().parent.parent / "data"
@@ -394,6 +407,7 @@ RECALL_HINTS = ("记得", "上次", "之前", "以前", "那次", "回忆", "白
 
 _last_sticker: dict[str, float] = defaultdict(float)
 _last_auto_sticker: dict[str, float] = defaultdict(float)
+_last_sticker_only: dict[str, float] = defaultdict(float)
 _recent_user_msgs: dict[str, deque] = defaultdict(lambda: deque(maxlen=12))
 _snub_until: dict[str, float] = {}
 _last_reply: dict[str, float] = defaultdict(float)
@@ -402,6 +416,8 @@ _last_message_at: dict[str, float] = {}
 # 每个会话最近一张图的 image 段：有人追问「图里写的啥」时现看，不用预先 OCR
 _last_image_seg: dict[str, tuple[float, object]] = {}
 _recent_reply_times: deque[float] = deque(maxlen=64)
+_group_sent: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=128))
+_last_casual: dict[str, float] = defaultdict(float)
 _history: dict[str, deque[tuple[str, str]]] = defaultdict(lambda: deque(maxlen=HISTORY_SIZE))
 _engaged: dict[str, dict] = {}
 _last_save = [0.0]
@@ -607,8 +623,8 @@ async def _diary_group(group_id: str, lines: list[tuple[str, str]]) -> None:
         logger.warning(f"persona: 摘群日记失败 {type(exc).__name__}: {exc}")
 
 
-async def _maybe_save_sticker(seg, card: str, user_id: str) -> None:
-    """群友发了库里没有的表情，看心情收藏一张；讨厌的人发的不收。"""
+async def _maybe_save_sticker(seg, card: str, user_id: str, context: str = "") -> None:
+    """群友发了库里没有的表情，看心情收藏一张；讨厌的人发的不收。用途按发图时的场景记进表情备注。"""
     data = getattr(seg, "data", None) or {}
     is_sticker = str(data.get("sub_type", "")) == "1" or "表情" in str(data.get("summary", ""))
     if not is_sticker or card.startswith("[表情:") or random.random() >= STICKER_SAVE_PROB:
@@ -620,7 +636,10 @@ async def _maybe_save_sticker(seg, card: str, user_id: str) -> None:
         return
     text = card.split("｜", 1)[1].rstrip("]") if "｜" in card else ""
     try:
-        item = await asyncio.to_thread(sticker_lib.save_sticker, raw, sticker_category(text), text)
+        scene = sticker_scene(context)
+        item = await asyncio.to_thread(
+            sticker_lib.save_sticker, raw, sticker_category(text), text, scene[0] if scene else "",
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"persona: 收藏表情失败 {type(exc).__name__}: {exc}")
         return
@@ -636,12 +655,27 @@ async def _save_bonds() -> None:
         logger.warning(f"persona: 小本本保存失败 {type(exc).__name__}: {exc}")
 
 
-def _quota_ok(kind: str) -> bool:
-    """群聊全局每分钟额度（按 QUOTA_TIERS 分档）；私聊和被叫触发的抽卡定型文不走这里。"""
+def _quota_ok(kind: str, key: str | None = None) -> bool:
+    """群聊全局每分钟额度 + 本群每小时额度（都按 QUOTA_TIERS 分档）；私聊和被叫触发的抽卡定型文不走这里。"""
     now = time.time()
     while _recent_reply_times and now - _recent_reply_times[0] > 60:
         _recent_reply_times.popleft()
-    return quota_allows(len(_recent_reply_times), GLOBAL_PER_MIN, kind)
+    if not quota_allows(len(_recent_reply_times), GLOBAL_PER_MIN, kind):
+        return False
+    if key is None or GROUP_PER_HOUR <= 0:
+        return True
+    sent = _group_sent[key]
+    while sent and now - sent[0] > 3600:
+        sent.popleft()
+    return quota_allows(len(sent), GROUP_PER_HOUR, kind)
+
+
+def _mark_sent(key: str, now: float, at_reply: bool = False) -> None:
+    """群里发了一条（含表情），记进每分钟额度；没被 @ 的还记进本群每小时额度和间隔。"""
+    _recent_reply_times.append(now)
+    if not at_reply:
+        _group_sent[key].append(now)
+        _last_casual[key] = now
 
 
 def _is_target_account(event: MessageEvent) -> bool:
@@ -731,7 +765,8 @@ async def _handle(bot: Bot, event: MessageEvent) -> None:
         logger.info(f"persona: 图片图卡 -> {card}")
         text = card
         if str(event.get_user_id()) != str(event.self_id):
-            _background(_maybe_save_sticker(seg_now, card, str(event.get_user_id())))
+            prev = _history[key][-1][1] if _history[key] else ""
+            _background(_maybe_save_sticker(seg_now, card, str(event.get_user_id()), prev))
     elif seg_now is None and any(h in text for h in IMAGE_HINTS):
         # 「图片里的话是啥意思」这类追问：把刚才那张图的图卡补进上下文
         card = await _card_of_last_image(key)
@@ -810,7 +845,7 @@ async def _handle(bot: Bot, event: MessageEvent) -> None:
             past, name, text, atmosphere="烦", self_names=NICKNAMES,
             mood="不耐烦", dev_name=DEV_NAME or None,
         )
-        if not _quota_ok("被叫"):
+        if not _quota_ok("被叫", key):
             logger.info(f"persona: 嫌烦收尾跳过（全局限流），冷处理照旧（{why}）")
             return
         try:
@@ -819,11 +854,13 @@ async def _handle(bot: Bot, event: MessageEvent) -> None:
             logger.warning(f"persona: 收尾回复失败 {type(exc).__name__}: {exc}")
             return
         reply = humanize(raw, MAX_CHARS, fallback="烦了，不说了")
+        if is_offensive(reply):
+            reply = "烦了，不说了"
         history.append(("我", reply))
         _save_history(force=True)
         logger.info(f"persona -> {reply}（嫌烦收尾：{why}，冷处理 {SNUB_SECONDS:.0f}s）")
         await bot.send(event, reply)
-        _recent_reply_times.append(now)
+        _mark_sent(key, now)
         return
 
     # 收尾的话就散场，不接
@@ -853,7 +890,7 @@ async def _handle(bot: Bot, event: MessageEvent) -> None:
                 chime_prob = _chime_prob(key, mcfg)
                 if chime_prob <= 0 or random.random() >= chime_prob:
                     return
-                if now - _last_chime.get(key, 0) < CHIME_COOLDOWN_SEC or not _quota_ok("插话"):
+                if now - _last_chime.get(key, 0) < CHIME_COOLDOWN_SEC or not _quota_ok("插话", key):
                     return
                 label, allowed, reason = judge_atmosphere(list(history), idle)
                 if not allowed:
@@ -877,27 +914,34 @@ async def _handle(bot: Bot, event: MessageEvent) -> None:
     if (
         wants_sticker(text)
         and now - _last_sticker.get(key, 0) >= STICKER_COOLDOWN
-        and (not is_group or _quota_ok("被叫"))
+        and (not is_group or _quota_ok("被叫", key))
     ):
         item = sticker_lib.pick_for_mood(mood, key, STICKER_SAVED_PREFER)
         if item and await sticker_lib.send(bot, event, item):
             _last_sticker[key] = now
+            sticker_lib.mark_used(item)
             if is_group:
-                _recent_reply_times.append(now)
+                _mark_sent(key, now, at_reply=True)
             logger.info(f"persona: 发图 {item['file']}（{item.get('category')}／情绪 {mood}）")
 
-    cd = mcfg["cd"] if addressed else COOLDOWN_SEC
+    # 抽卡模式的 @ 照旧按 1.8% 触发定型文，不然每次 @ 都刷一篇长文
+    at_reply = mode == "被叫@" and mname != "米游抽卡"
+    # 被 @ 或喊名字都算有人找她：不受本群每小时额度和间隔限制（喊名字回不回看态度）
+    called = mode.startswith("被叫")
+    cd = min(mcfg["cd"], AT_COOLDOWN) if at_reply else mcfg["cd"] if addressed else COOLDOWN_SEC
     elapsed = now - _last_reply.get(key, 0)
     if elapsed < cd:
         logger.info(f"persona: 跳过（冷却中 {elapsed:.1f}s < {cd:.0f}s，模式 {mode or '插话'}）")
         return
 
-    # 不是每条都接：被叫/接续各有概率，私聊才必回
-    if addressed and mode != "私聊":
-        prob = mcfg["called"] if mode.startswith("被叫") else mcfg["follow"]
-        # 态度只微调概率；已经是必回（话痨档、概率设成 1）的不打折
-        if prob < 1.0:
-            prob = min(1.0, prob * ATTITUDE_REPLY_FACTOR.get(att or "普通", 1.0))
+    # 不是每条都接：私聊必回，被 @ 就回（静音档前面已经拦了）；喊名字回不回看态度；接续按态度微调，已经是必回的不打折
+    if addressed and mode != "私聊" and not at_reply:
+        if called:
+            prob = name_call_prob("亲近" if is_dev else att, mcfg["called"], PROB_CALLED or 0.5)
+        else:
+            prob = mcfg["follow"]
+            if prob < 1.0:
+                prob = min(1.0, prob * ATTITUDE_REPLY_FACTOR.get(att or "普通", 1.0))
         if random.random() > prob:
             logger.info(f"persona: 这次不接（{mode}，概率 {prob:.0%}）")
             return
@@ -917,13 +961,16 @@ async def _handle(bot: Bot, event: MessageEvent) -> None:
             await bot.send(event, reply)
         # 被叫触发的定型文不拦，但照样占额度，让其它闲聊先让路
         if is_group:
-            _recent_reply_times.append(now)
+            _mark_sent(key, now)
         return
 
-    if is_group:
+    if is_group and not called:
+        if now - _last_casual[key] < CASUAL_GAP:
+            logger.info(f"persona: 跳过（离上次没被 @ 的回话不到 {CASUAL_GAP:.0f}s，{mode}）")
+            return
         tier = "被叫" if mode.startswith("被叫") else "接续" if mode.startswith("接续") else "插话"
-        if not _quota_ok(tier):
-            logger.info(f"persona: 跳过（全局限流 {GLOBAL_PER_MIN}/分钟，{mode}）")
+        if not _quota_ok(tier, key):
+            logger.info(f"persona: 跳过（限流：每分钟 {GLOBAL_PER_MIN} 条 / 本群每小时 {GROUP_PER_HOUR} 条，{mode}）")
             return
 
     past = past_snapshot
@@ -931,23 +978,31 @@ async def _handle(bot: Bot, event: MessageEvent) -> None:
         logger.debug(f"persona: 上下文 {len(past)} 条，末条 {past[-1][0]}: {past[-1][1][:24]}")
 
     help_mode = wants_help(text)
-    # 群里有时只甩一张表情：像真人冒个泡，也少说话少露馅
+    scene = sticker_scene(text)
+    # 群里碰到明显场景时有时只甩一张对得上的表情，偶尔也随手甩张无厘头的：像真人冒个泡，也少说话少露馅
+    item = None
     if (
-        is_group and not help_mode and mode != "被叫@" and not wants_sticker(text)
-        and sticker_lib.count() and random.random() < STICKER_ONLY_PROB
+        is_group and not help_mode and not called and not wants_sticker(text)
+        and now - _last_sticker_only[key] >= STICKER_ONLY_COOLDOWN
+        and now - _last_sticker.get(key, 0) >= STICKER_AUTO_COOLDOWN
     ):
-        item = sticker_lib.pick_for_mood(mood, key, STICKER_SAVED_PREFER)
-        if item and await sticker_lib.send(bot, event, item):
-            _last_reply[key] = _last_sticker[key] = now
+        if scene and random.random() < STICKER_ONLY_PROB:
+            item = sticker_lib.pick_for_scene(scene[1], key, STICKER_SAVED_PREFER)
+        elif not scene and random.random() < STICKER_RANDOM_PROB:
+            item = sticker_lib.pick("", key)
+    if item:
+        if await sticker_lib.send(bot, event, item):
+            sticker_lib.mark_used(item, scene[0] if scene else None)
+            _last_reply[key] = _last_sticker[key] = _last_sticker_only[key] = now
             if mode.startswith("插话"):
                 _last_chime[key] = now
             history.append(("我", f"[表情:{item.get('category') or '表情'}]"))
             _save_history(force=True)
-            _recent_reply_times.append(now)
+            _mark_sent(key, now)
             st = _engaged.get(key)
             if st is not None and addressed:
                 st["last"], st["turns"] = now, int(st.get("turns", 0)) + 1
-            logger.info(f"persona: 只回了张表情 {item['file']}（{mode}，情绪 {mood}）")
+            logger.info(f"persona: 只回了张表情 {item['file']}（{mode}，场景 {scene[0] if scene else '无厘头'}）")
             return
 
     # 问到「记得/上次」这类，翻一下白守里的记忆
@@ -1003,6 +1058,9 @@ async def _handle(bot: Bot, event: MessageEvent) -> None:
     reply = humanize(raw, MAX_CHARS_HELP if help_mode else MAX_CHARS)
     if not reply:
         return
+    if is_offensive(reply):
+        logger.warning(f"persona: 这句带攻击性，不发：{reply}")
+        return
 
     # 接续/插话本来就可有可无：这期间别人已经插了新话，就别补旧的一句，否则看着像答错人
     if is_group and not mode.startswith("被叫") and _last_message_at.get(key, 0.0) > started_at:
@@ -1029,7 +1087,7 @@ async def _handle(bot: Bot, event: MessageEvent) -> None:
     else:
         await bot.send(event, reply)
     if is_group:
-        _recent_reply_times.append(now)
+        _mark_sent(key, now, called)
 
     # 聊够几轮、或者对方在说自己的事，就摘一次个人日记（同一人至少隔 10 分钟）
     if DIARY_USER_EVERY > 0 and addressed:
@@ -1065,14 +1123,17 @@ async def _handle(bot: Bot, event: MessageEvent) -> None:
             roll < chance
             and now - _last_auto_sticker.get(key, 0) >= STICKER_AUTO_COOLDOWN
             and now - _last_sticker.get(key, 0) >= STICKER_COOLDOWN
-            and (not is_group or _quota_ok("插话"))
+            and (not is_group or _quota_ok("插话", key))
         ):
-            item = sticker_lib.pick_for_mood(mood, key, STICKER_SAVED_PREFER)
+            # 有场景就挑对得上的，没有才按情绪挑
+            item = (sticker_lib.pick_for_scene(scene[1], key, STICKER_SAVED_PREFER) if scene else None) \
+                or sticker_lib.pick_for_mood(mood, key, STICKER_SAVED_PREFER)
             if item and await sticker_lib.send(bot, event, item):
                 _last_auto_sticker[key] = now
                 _last_sticker[key] = now
+                sticker_lib.mark_used(item, scene[0] if scene else None)
                 if is_group:
-                    _recent_reply_times.append(now)
+                    _mark_sent(key, now, called)
                 logger.info(f"persona: 顺手配图 {item['file']}（{mood}，概率 {chance:.0%}）")
 mode_cmd = on_command("模式", priority=16, block=True)
 

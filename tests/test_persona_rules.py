@@ -17,6 +17,7 @@ from persona_rules import (  # noqa: E402
     follow_decision,
     humanize,
     is_conversation_ending,
+    is_offensive,
     is_game_command,
     judge_atmosphere,
     judge_annoyance,
@@ -24,12 +25,14 @@ from persona_rules import (  # noqa: E402
     looks_addressed,
     looks_self_disclosure,
     merge_notes,
+    name_call_prob,
     parse_group_diary,
     parse_notes,
     pick_flavor,
     quota_allows,
     safe_name,
     sticker_category,
+    sticker_scene,
     update_bond,
     visible_notes,
 )
@@ -250,6 +253,16 @@ def main() -> int:
     assert "保持傲" in calm and "说漏嘴" not in calm and "说漏嘴" in soft
     print("PASS  底子是傲：只有抽中时才露一点真心")
 
+    probs = [name_call_prob(a, 0.5) for a in ("讨厌", "陌生", "普通", "有好感", "亲近")]
+    assert probs == sorted(probs) and probs[0] <= 0.15 and probs[-1] < 1.0, probs  # 好感越高越愿意理，但都不是必回
+    assert name_call_prob("亲近", 1.0) == 1.0 and name_call_prob("亲近", 0.0) == 0.0  # 话痨档必回、静音档不回
+    print("PASS  喊名字回不回看态度")
+
+    base = compose_messages([], "小红", "在吗", attitude="讨厌", chime=True)[0]["content"]
+    assert "绝不辱骂" in base and "不人身攻击" in base and "毒舌" in base  # 可以毒舌，不能辱骂攻击
+    assert is_offensive("你个傻逼") and is_offensive("滚吧") and not is_offensive("才不理你呢") and not is_offensive("")
+    print("PASS  可以毒舌但不辱骂：人设写明底线，带脏话的回复不发")
+
     assert attitude(0, 0) == "陌生" and attitude(0, 20) == "普通" and attitude(30, 20) == "有好感"
     assert attitude(60, 40) == "亲近" and attitude(60, 10) == "有好感" and attitude(-40, 50) == "讨厌"
     msgs = compose_messages([], "小红", "在吗", attitude="亲近", user_notes=["喜欢原神"], group_notes=["小红和小明常一起打鸣潮"])
@@ -271,7 +284,10 @@ def main() -> int:
     mixed = [{"t": "群里说的", "src": "g1"}, {"t": "私聊说的", "src": "p"}]
     assert visible_notes(mixed, True) == ["群里说的"] and visible_notes(mixed, False) == ["群里说的", "私聊说的"]
     assert looks_self_disclosure("我最近在玩鸣潮") and not looks_self_disclosure("你在干嘛")
-    assert sticker_category("哼！") == "生气" and sticker_category("贴贴") == "卖萌" and sticker_category("") == "收藏"
+    assert sticker_category("活该") == "幸灾乐祸" and sticker_category("揍你") == "生气" and sticker_category("") == "收藏"
+    assert sticker_scene("我又歪了啊啊啊")[0] == "幸灾乐祸" and sticker_scene("十连出金了")[0] == "羡慕"
+    assert sticker_scene("卧槽")[0] == "震惊" and sticker_scene("今天吃啥") is None and sticker_scene("") is None
+    assert "幸灾乐祸" in sticker_scene("沉船了")[1]
     print("PASS  小本本：拆条、去重、限量，私聊听来的不进群")
 
     assert parse_group_diary("关系：小明和小红常一起打原神；小李是群主｜风格：爱玩谐音梗；半夜最活跃") == (
