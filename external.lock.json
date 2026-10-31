@@ -8,7 +8,7 @@
   "git": {
     "gsuid_core": {
       "repo": "https://github.com/Genshin-bots/gsuid_core.git",
-      "commit": "042ab5a187544d0def582db2730faa8049f50544"
+      "commit": "24c59af164f437adef5468e48d864bb3b2400a79"
     },
     "GenshinUID": {
       "repo": "https://github.com/KimigaiiWuyi/GenshinUID.git",
@@ -48,7 +48,7 @@
     },
     "XutheringWavesUID": {
       "repo": "https://github.com/Loping151/XutheringWavesUID.git",
-      "commit": "f0a8f88b586342310e4d9d5341fa321fb838f05d",
+      "commit": "b29863c0284028bc289464e9353ceebfe1311ce1",
       "game": "鸣潮",
       "prefixes": [
         "ww"
@@ -58,7 +58,7 @@
     },
     "EndUID": {
       "repo": "https://github.com/Loping151/EndUID.git",
-      "commit": "e08cd754217f85250eefe0b158db0362584f414b",
+      "commit": "9aa432f3402eb7086ec7d50c641b8863e69f4c18",
       "game": "明日方舟：终末地",
       "prefixes": [
         "zmd",
