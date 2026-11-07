@@ -1,18 +1,18 @@
 {
   "_说明": "外部组件锁定的版本。commit / version 由 .github/workflows/update-deps.yml 自动更新（开 PR），合并后在电脑上双击「一键更新.cmd」生效。早柚核心插件：game 是游戏名，prefixes 是人设要避让的指令前缀，help 是冒烟测试发的帮助指令，login 是插件自己的登录指令（冒烟测试查它不进群、私聊回到临时会话）；新增插件就照着加一项。",
   "snowluma": {
-    "version": "v2.2.1",
-    "asset": "SnowLuma-v2.2.1-win-x64.zip",
-    "sha256": "09a3fbbf42ea805c4d61b5e67bec2a46ef341fa803f211d78c40796cb7f535dc"
+    "version": "v2.4.0",
+    "asset": "SnowLuma-v2.4.0-win-x64.zip",
+    "sha256": "93096cb6d4cf576999094e9f7d1c9fb08e22f6b41c879182f015e639dc437613"
   },
   "git": {
     "gsuid_core": {
       "repo": "https://github.com/Genshin-bots/gsuid_core.git",
-      "commit": "042ab5a187544d0def582db2730faa8049f50544"
+      "commit": "7fffc7ef7c4de2ef3bda0f71af7ff455b7c2cbd7"
     },
     "GenshinUID": {
       "repo": "https://github.com/KimigaiiWuyi/GenshinUID.git",
-      "commit": "902341b1b5164c0524da9ad907a480a671f50cee",
+      "commit": "f8f8c58a0fded32a2838ffc951c71e7c88d77d74",
       "game": "原神",
       "prefixes": [
         "gs"
@@ -30,7 +30,7 @@
     },
     "ZZZeroUID": {
       "repo": "https://github.com/ZZZure/ZZZeroUID.git",
-      "commit": "3aae474dd926fe35472e7b89b104473af5ccdc8d",
+      "commit": "5f1c0f9e761aa2b8ee7d9bac34097884541507d5",
       "game": "绝区零",
       "prefixes": [
         "zzz"
@@ -48,7 +48,7 @@
     },
     "XutheringWavesUID": {
       "repo": "https://github.com/Loping151/XutheringWavesUID.git",
-      "commit": "f0a8f88b586342310e4d9d5341fa321fb838f05d",
+      "commit": "9474df5d0022399cd31a79f93c632fbd243b3173",
       "game": "鸣潮",
       "prefixes": [
         "ww"
@@ -58,7 +58,7 @@
     },
     "EndUID": {
       "repo": "https://github.com/Loping151/EndUID.git",
-      "commit": "e08cd754217f85250eefe0b158db0362584f414b",
+      "commit": "a6fff57a527400bd008a85fbf72e49ddac849a14",
       "game": "明日方舟：终末地",
       "prefixes": [
         "zmd",
